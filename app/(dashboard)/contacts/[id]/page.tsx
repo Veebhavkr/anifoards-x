@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import DashboardShell from "@/components/layout/DashboardShell";
+import NoteForm, { type RelatedOption } from "@/components/forms/NoteForm";
 
 type Contact = {
   id: string;
@@ -18,84 +19,43 @@ type Contact = {
   updated_at: string | null;
 };
 
+type Note = {
+  id: string;
+  organization_id: string;
+  created_by: string;
+  title: string;
+  content: string | null;
+  contact_id: string | null;
+  company_id: string | null;
+  lead_id: string | null;
+  deal_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export default function ContactDetailPage() {
   const params = useParams<{ id?: string; contactId?: string }>();
   const router = useRouter();
 
   const [contact, setContact] = useState<Contact | null>(null);
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [organizationId, setOrganizationId] = useState("");
+  const [userId, setUserId] = useState("");
   const [loading, setLoading] = useState(true);
+  const [notesLoading, setNotesLoading] = useState(false);
+  const [showNoteForm, setShowNoteForm] = useState(false);
+  const [editingNote, setEditingNote] = useState<Note | null>(null);
   const [error, setError] = useState("");
   const [deleting, setDeleting] = useState(false);
 
-  useEffect(() => {
-    async function loadContact() {
-      const contactId = params?.id ?? params?.contactId;
+  const contactId = params?.id ?? params?.contactId;
 
-      if (!contactId) {
-        setError("Contact ID is missing.");
-        setLoading(false);
-        return;
-      }
-
-      const supabase = createClient();
-
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        setError("Please login first.");
-        setLoading(false);
-        return;
-      }
-
-      const { data: membership, error: membershipError } = await supabase
-        .from("organization_members")
-        .select("organization_id")
-        .eq("user_id", user.id)
-        .limit(1)
-        .maybeSingle();
-
-      if (membershipError || !membership?.organization_id) {
-        setError("No organization found.");
-        setLoading(false);
-        return;
-      }
-
-      const { data, error: contactError } = await supabase
-        .from("contacts")
-        .select(
-          "id, organization_id, first_name, last_name, email, phone, job_title, created_at, updated_at"
-        )
-        .eq("id", contactId)
-        .eq("organization_id", membership.organization_id)
-        .maybeSingle();
-
-      if (contactError) {
-        setError(contactError.message);
-      } else if (!data) {
-        setError("Contact not found.");
-      } else {
-        setContact(data);
-      }
-
+  async function loadPage() {
+    if (!contactId) {
+      setError("Contact ID is missing.");
       setLoading(false);
+      return;
     }
-
-    loadContact();
-  }, [params?.id, params?.contactId]);
-
-  async function handleDelete() {
-    if (!contact) return;
-
-    const confirmed = window.confirm(
-      `Delete ${contact.first_name}${contact.last_name ? ` ${contact.last_name}` : ""}? This action cannot be undone.`
-    );
-
-    if (!confirmed) return;
-
-    setDeleting(true);
-    setError("");
 
     const supabase = createClient();
 
@@ -105,28 +65,110 @@ export default function ContactDetailPage() {
 
     if (!user) {
       setError("Please login first.");
-      setDeleting(false);
+      setLoading(false);
       return;
     }
 
-    const { data: membership } = await supabase
+    const { data: membership, error: membershipError } = await supabase
       .from("organization_members")
       .select("organization_id")
       .eq("user_id", user.id)
       .limit(1)
       .maybeSingle();
 
-    if (!membership?.organization_id) {
+    if (membershipError || !membership?.organization_id) {
       setError("No organization found.");
-      setDeleting(false);
+      setLoading(false);
       return;
     }
 
+    const orgId = membership.organization_id;
+    setOrganizationId(orgId);
+    setUserId(user.id);
+
+    const [{ data: contactData, error: contactError }, { data: noteData, error: noteError }] =
+      await Promise.all([
+        supabase
+          .from("contacts")
+          .select(
+            "id, organization_id, first_name, last_name, email, phone, job_title, created_at, updated_at",
+          )
+          .eq("id", contactId)
+          .eq("organization_id", orgId)
+          .maybeSingle(),
+        supabase
+          .from("notes")
+          .select(
+            "id, organization_id, created_by, title, content, contact_id, company_id, lead_id, deal_id, created_at, updated_at",
+          )
+          .eq("organization_id", orgId)
+          .eq("contact_id", contactId)
+          .order("created_at", { ascending: false }),
+      ]);
+
+    if (contactError) {
+      setError(contactError.message);
+    } else if (!contactData) {
+      setError("Contact not found.");
+    } else {
+      setContact(contactData);
+    }
+
+    if (noteError) {
+      setError(noteError.message);
+    } else {
+      setNotes(noteData ?? []);
+    }
+
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    loadPage();
+  }, [contactId]);
+
+  async function loadNotes() {
+    if (!organizationId || !contactId) return;
+
+    setNotesLoading(true);
+    const supabase = createClient();
+
+    const { data, error: notesError } = await supabase
+      .from("notes")
+      .select(
+        "id, organization_id, created_by, title, content, contact_id, company_id, lead_id, deal_id, created_at, updated_at",
+      )
+      .eq("organization_id", organizationId)
+      .eq("contact_id", contactId)
+      .order("created_at", { ascending: false });
+
+    if (notesError) {
+      setError(notesError.message);
+    } else {
+      setNotes(data ?? []);
+    }
+
+    setNotesLoading(false);
+  }
+
+  async function handleDelete() {
+    if (!contact) return;
+
+    const confirmed = window.confirm(
+      `Delete ${contact.first_name}${contact.last_name ? ` ${contact.last_name}` : ""}? This action cannot be undone.`,
+    );
+
+    if (!confirmed) return;
+
+    setDeleting(true);
+    setError("");
+
+    const supabase = createClient();
     const { error: deleteError } = await supabase
       .from("contacts")
       .delete()
       .eq("id", contact.id)
-      .eq("organization_id", membership.organization_id);
+      .eq("organization_id", organizationId);
 
     if (deleteError) {
       setError(deleteError.message);
@@ -137,9 +179,35 @@ export default function ContactDetailPage() {
     router.push("/contacts");
   }
 
+  async function handleDeleteNote(noteId: string) {
+    const confirmed = window.confirm("Delete this note? This action cannot be undone.");
+    if (!confirmed) return;
+
+    const supabase = createClient();
+    const { error: deleteError } = await supabase
+      .from("notes")
+      .delete()
+      .eq("id", noteId)
+      .eq("organization_id", organizationId)
+      .eq("contact_id", contactId);
+
+    if (deleteError) {
+      setError(deleteError.message);
+      return;
+    }
+
+    setNotes((current) => current.filter((note) => note.id !== noteId));
+  }
+
   const fullName = contact
     ? `${contact.first_name} ${contact.last_name ?? ""}`.trim()
     : "Contact";
+
+  const contactOptions: RelatedOption[] = contact
+    ? [{ id: contact.id, name: fullName }]
+    : [];
+
+  const emptyOptions: RelatedOption[] = [];
 
   return (
     <DashboardShell>
@@ -157,7 +225,7 @@ export default function ContactDetailPage() {
             <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-gray-900" />
             <p className="mt-4 text-sm text-gray-500">Loading contact...</p>
           </div>
-        ) : error ? (
+        ) : error && !contact ? (
           <div className="rounded-2xl border border-red-200 bg-red-50 p-6">
             <p className="text-sm text-red-700">{error}</p>
             <Link
@@ -178,9 +246,7 @@ export default function ContactDetailPage() {
                   <p className="text-xs font-semibold uppercase tracking-wider text-blue-600">
                     Contact Profile
                   </p>
-                  <h1 className="mt-1 text-2xl font-bold text-gray-950">
-                    {fullName}
-                  </h1>
+                  <h1 className="mt-1 text-2xl font-bold text-gray-950">{fullName}</h1>
                   <p className="mt-1 text-sm text-gray-500">
                     {contact.job_title ?? "No job title added"}
                   </p>
@@ -207,56 +273,22 @@ export default function ContactDetailPage() {
 
             <div className="grid gap-6 lg:grid-cols-3">
               <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm lg:col-span-2">
-                <h2 className="text-lg font-bold text-gray-950">
-                  Contact Information
-                </h2>
-
+                <h2 className="text-lg font-bold text-gray-950">Contact Information</h2>
                 <div className="mt-6 grid gap-5 sm:grid-cols-2">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-                      First Name
-                    </p>
-                    <p className="mt-1 text-sm font-medium text-gray-900">
-                      {contact.first_name}
-                    </p>
-                  </div>
-
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-                      Last Name
-                    </p>
-                    <p className="mt-1 text-sm font-medium text-gray-900">
-                      {contact.last_name ?? "—"}
-                    </p>
-                  </div>
-
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-                      Email
-                    </p>
-                    <p className="mt-1 break-all text-sm font-medium text-gray-900">
-                      {contact.email ?? "—"}
-                    </p>
-                  </div>
-
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-                      Phone
-                    </p>
-                    <p className="mt-1 text-sm font-medium text-gray-900">
-                      {contact.phone ?? "—"}
-                    </p>
-                  </div>
-
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-                      Job Title
-                    </p>
-                    <p className="mt-1 text-sm font-medium text-gray-900">
-                      {contact.job_title ?? "—"}
-                    </p>
-                  </div>
-
+                  {[
+                    ["First Name", contact.first_name],
+                    ["Last Name", contact.last_name ?? "—"],
+                    ["Email", contact.email ?? "—"],
+                    ["Phone", contact.phone ?? "—"],
+                    ["Job Title", contact.job_title ?? "—"],
+                  ].map(([label, value]) => (
+                    <div key={label}>
+                      <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                        {label}
+                      </p>
+                      <p className="mt-1 break-all text-sm font-medium text-gray-900">{value}</p>
+                    </div>
+                  ))}
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
                       Status
@@ -269,24 +301,114 @@ export default function ContactDetailPage() {
               </div>
 
               <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-                <h2 className="text-lg font-bold text-gray-950">
-                  CRM Activity
-                </h2>
+                <h2 className="text-lg font-bold text-gray-950">CRM Activity</h2>
                 <p className="mt-2 text-sm leading-6 text-gray-500">
-                  Related activities, tasks, notes, and deals can be connected
-                  to this contact in the next CRM integration phase.
+                  Notes and other CRM records linked to this contact are shown below.
                 </p>
-
                 <div className="mt-6 rounded-xl bg-gray-50 p-4">
                   <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
                     Contact ID
                   </p>
-                  <p className="mt-2 break-all text-xs text-gray-600">
-                    {contact.id}
-                  </p>
+                  <p className="mt-2 break-all text-xs text-gray-600">{contact.id}</p>
                 </div>
               </div>
             </div>
+
+            <section className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-lg font-bold text-gray-950">Related Notes</h2>
+                  <p className="mt-1 text-sm text-gray-500">
+                    Notes linked to {fullName}.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingNote(null);
+                    setShowNoteForm((current) => !current);
+                  }}
+                  className="rounded-xl bg-gray-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-gray-800"
+                >
+                  {showNoteForm ? "Close Form" : "Add Note"}
+                </button>
+              </div>
+
+              {showNoteForm && (
+                <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
+                  <NoteForm
+                    organizationId={organizationId}
+                    userId={userId}
+                    note={editingNote}
+                    contacts={contactOptions}
+                    companies={emptyOptions}
+                    leads={emptyOptions}
+                    deals={emptyOptions}
+                    fixedContactId={contact.id}
+                    onSuccess={() => {
+                      setShowNoteForm(false);
+                      setEditingNote(null);
+                      loadNotes();
+                    }}
+                    onCancel={() => {
+                      setShowNoteForm(false);
+                      setEditingNote(null);
+                    }}
+                  />
+                </div>
+              )}
+
+              {notesLoading ? (
+                <p className="mt-6 text-sm text-gray-500">Loading notes...</p>
+              ) : notes.length === 0 ? (
+                <div className="mt-6 rounded-xl bg-gray-50 p-6 text-center text-sm text-gray-500">
+                  No notes linked to this contact yet.
+                </div>
+              ) : (
+                <div className="mt-6 space-y-3">
+                  {notes.map((note) => (
+                    <article key={note.id} className="rounded-xl border border-gray-200 p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <h3 className="font-semibold text-gray-900">{note.title}</h3>
+                          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-600">
+                            {note.content || "No content"}
+                          </p>
+                          <p className="mt-3 text-xs text-gray-400">
+                            {new Date(note.created_at).toLocaleString()}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingNote(note);
+                              setShowNoteForm(true);
+                            }}
+                            className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteNote(note.id)}
+                            className="rounded-lg border border-red-200 px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            {error && (
+              <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                {error}
+              </div>
+            )}
           </>
         ) : null}
       </div>

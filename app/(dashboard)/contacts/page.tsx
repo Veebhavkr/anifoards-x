@@ -144,8 +144,8 @@ export default function ContactsPage() {
 
   function parseContactsCsv(content: string): ImportContact[] {
     const lines = content
-      .replace(/^\\uFEFF/, "")
-      .split(/\\r?\\n/)
+      .replace(/^\uFEFF/, "")
+      .split(/\r?\n/)
       .map((line) => line.trim())
       .filter(Boolean);
 
@@ -154,7 +154,7 @@ export default function ContactsPage() {
     }
 
     const headers = parseCsvLine(lines[0]).map((header) =>
-      header.toLowerCase().replace(/\\s+/g, "_")
+      header.toLowerCase().replace(/\s+/g, "_")
     );
 
     const requiredHeaders = ["first_name"];
@@ -230,12 +230,19 @@ export default function ContactsPage() {
           .filter(Boolean)
       );
 
-      const uniqueRows = importRows.filter(
-        (row) => !row.email || !existingEmails.has(row.email.toLowerCase())
-      );
+      const seenEmails = new Set<string>();
+      const uniqueRows = importRows.filter((row) => {
+        const email = row.email?.trim().toLowerCase();
+
+        if (!email) return true;
+        if (existingEmails.has(email) || seenEmails.has(email)) return false;
+
+        seenEmails.add(email);
+        return true;
+      });
 
       if (uniqueRows.length === 0) {
-        throw new Error("All CSV contacts already exist or have duplicate emails.");
+        throw new Error("All CSV contacts already exist or contain duplicate emails.");
       }
 
       const supabase = createClient();
@@ -275,6 +282,55 @@ export default function ContactsPage() {
     } finally {
       setImportLoading(false);
     }
+  }
+
+  function escapeCsvValue(value: unknown) {
+    const text = value === null || value === undefined ? "" : String(value);
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+
+  function handleExportContacts() {
+    if (contacts.length === 0) {
+      setActionError("No contacts available to export.");
+      return;
+    }
+
+    const headers = [
+      "id",
+      "first_name",
+      "last_name",
+      "email",
+      "phone",
+      "job_title",
+      "owner_id",
+    ];
+
+    const rows = contacts.map((contact) =>
+      [
+        contact.id,
+        contact.first_name,
+        contact.last_name,
+        contact.email,
+        contact.phone,
+        contact.job_title,
+        contact.owner_id,
+      ]
+        .map(escapeCsvValue)
+        .join(","),
+    );
+
+    const csv = [headers.map(escapeCsvValue).join(","), ...rows].join("\n");
+    const blob = new Blob([`\\uFEFF${csv}`], {
+      type: "text/csv;charset=utf-8;",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `contacts-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
   }
 
   async function handleDeleteContact(contact: Contact) {
@@ -387,6 +443,14 @@ export default function ContactsPage() {
               className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-300 bg-white px-5 py-3 text-sm font-semibold text-gray-800 shadow-sm transition hover:bg-gray-50"
             >
               Import CSV
+            </button>
+
+            <button
+              type="button"
+              onClick={handleExportContacts}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-300 bg-white px-5 py-3 text-sm font-semibold text-gray-800 shadow-sm transition hover:bg-gray-50"
+            >
+              Export CSV
             </button>
 
             <button

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import DashboardShell from "@/components/layout/DashboardShell";
+import NoteForm, { type RelatedOption } from "@/components/forms/NoteForm";
 
 type Contact = {
   id: string;
@@ -30,6 +31,20 @@ type Company = {
   updated_at: string | null;
 };
 
+type Note = {
+  id: string;
+  organization_id: string;
+  created_by: string;
+  title: string;
+  content: string | null;
+  contact_id: string | null;
+  company_id: string | null;
+  lead_id: string | null;
+  deal_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export default function CompanyDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
@@ -37,6 +52,12 @@ export default function CompanyDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [organizationId, setOrganizationId] = useState("");
+  const [userId, setUserId] = useState("");
+  const [showNoteForm, setShowNoteForm] = useState(false);
+  const [editingNote, setEditingNote] = useState<Note | null>(null);
+  const [notesLoading, setNotesLoading] = useState(false);
 
   useEffect(() => {
     async function loadCompany() {
@@ -98,6 +119,17 @@ export default function CompanyDetailPage() {
         setContacts((contactData ?? []) as Contact[]);
       }
 
+      setOrganizationId(membership.organization_id);
+      setUserId(user.id);
+
+      const { data: noteData } = await supabase
+        .from("notes")
+        .select("id, organization_id, created_by, title, content, contact_id, company_id, lead_id, deal_id, created_at, updated_at")
+        .eq("organization_id", membership.organization_id)
+        .eq("company_id", params.id)
+        .order("created_at", { ascending: false });
+
+      setNotes((noteData ?? []) as Note[]);
       setLoading(false);
     }
 
@@ -105,6 +137,32 @@ export default function CompanyDetailPage() {
       loadCompany();
     }
   }, [params.id, router]);
+
+  async function loadNotes() {
+    if (!organizationId || !params.id) return;
+    setNotesLoading(true);
+    const supabase = createClient();
+    const { data } = await supabase
+      .from("notes")
+      .select("id, organization_id, created_by, title, content, contact_id, company_id, lead_id, deal_id, created_at, updated_at")
+      .eq("organization_id", organizationId)
+      .eq("company_id", params.id)
+      .order("created_at", { ascending: false });
+    setNotes((data ?? []) as Note[]);
+    setNotesLoading(false);
+  }
+
+  async function handleDeleteNote(noteId: string) {
+    if (!window.confirm("Delete this note?")) return;
+    const supabase = createClient();
+    const { error: deleteError } = await supabase
+      .from("notes")
+      .delete()
+      .eq("id", noteId)
+      .eq("organization_id", organizationId)
+      .eq("company_id", params.id);
+    if (!deleteError) setNotes((current) => current.filter((note) => note.id !== noteId));
+  }
 
   async function handleDelete() {
     if (!company) return;
@@ -322,6 +380,55 @@ export default function CompanyDetailPage() {
               ))}
             </div>
           )}
+        </section>
+
+        <section className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-bold text-gray-900">Company Notes</h2>
+              <p className="mt-1 text-sm text-gray-500">Notes linked to this company.</p>
+            </div>
+            <button type="button" onClick={() => { setEditingNote(null); setShowNoteForm(true); }}
+              className="rounded-xl bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700">
+              Add Note
+            </button>
+          </div>
+
+          {showNoteForm && (
+            <div className="mt-5 rounded-xl border border-gray-200 bg-gray-50 p-4">
+              <NoteForm
+                organizationId={organizationId}
+                userId={userId}
+                note={editingNote}
+                contacts={[]}
+                companies={[{ id: company.id, name: company.name }]}
+                leads={[]}
+                deals={[]}
+                fixedCompanyId={company.id}
+                onSuccess={() => { setShowNoteForm(false); setEditingNote(null); loadNotes(); }}
+                onCancel={() => { setShowNoteForm(false); setEditingNote(null); }}
+              />
+            </div>
+          )}
+
+          <div className="mt-5 space-y-3">
+            {notesLoading ? <p className="text-sm text-gray-500">Loading notes...</p> : notes.length === 0 ? (
+              <p className="rounded-xl border border-dashed border-gray-200 p-6 text-center text-sm text-gray-500">No notes linked to this company.</p>
+            ) : notes.map((note) => (
+              <div key={note.id} className="rounded-xl border border-gray-200 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="font-semibold text-gray-900">{note.title}</h3>
+                    <p className="mt-1 whitespace-pre-wrap text-sm text-gray-600">{note.content || "—"}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => { setEditingNote(note); setShowNoteForm(true); }} className="text-sm font-semibold text-blue-600">Edit</button>
+                    <button type="button" onClick={() => handleDeleteNote(note.id)} className="text-sm font-semibold text-red-600">Delete</button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
         </section>
 
         <section className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">

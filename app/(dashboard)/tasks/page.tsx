@@ -12,6 +12,8 @@ type Task = {
   status: string;
   priority: string;
   due_date: string | null;
+  due_time: string | null;
+  assigned_to: string | null;
   created_at: string;
 };
 
@@ -42,6 +44,18 @@ function formatDate(date: string | null) {
     day: "numeric",
     month: "short",
     year: "numeric",
+  });
+}
+
+function formatTime(time: string | null) {
+  if (!time) return "";
+  const [hours, minutes] = time.split(":").map(Number);
+  if (Number.isNaN(hours) || Number.isNaN(minutes)) return time;
+  const date = new Date();
+  date.setHours(hours, minutes, 0, 0);
+  return date.toLocaleTimeString("en-IN", {
+    hour: "numeric",
+    minute: "2-digit",
   });
 }
 
@@ -81,6 +95,11 @@ function getStatusClass(status: string) {
   }
 
   return "bg-gray-100 text-gray-700";
+}
+
+function escapeCsvValue(value: unknown) {
+  const text = value == null ? "" : String(value);
+  return `"${text.replace(/"/g, '""')}"`;
 }
 
 export default function TasksPage() {
@@ -151,7 +170,7 @@ export default function TasksPage() {
     const { data, error: taskError } = await supabase
       .from("tasks")
       .select(
-        "id, title, description, status, priority, due_date, created_at"
+        "id, title, description, status, priority, due_date, due_time, assigned_to, created_at"
       )
       .eq("organization_id", organizationId)
       .order("created_at", { ascending: false });
@@ -199,6 +218,66 @@ export default function TasksPage() {
     setTasks((currentTasks) =>
       currentTasks.filter((task) => task.id !== taskId)
     );
+  }
+
+  async function updateTaskStatus(taskId: string, status: string) {
+    setError("");
+
+    const supabase = createClient();
+    const currentOrganizationId = await getOrganizationId();
+
+    if (!currentOrganizationId) {
+      setError("No organization found.");
+      return;
+    }
+
+    const { error: updateError } = await supabase
+      .from("tasks")
+      .update({ status })
+      .eq("id", taskId)
+      .eq("organization_id", currentOrganizationId);
+
+    if (updateError) {
+      setError(updateError.message);
+      return;
+    }
+
+    setTasks((currentTasks) =>
+      currentTasks.map((task) =>
+        task.id === taskId ? { ...task, status } : task,
+      ),
+    );
+  }
+
+  function handleExportTasks() {
+    if (tasks.length === 0) {
+      setError("No tasks available to export.");
+      return;
+    }
+
+    const headers = [
+      "id", "title", "description", "status", "priority",
+      "due_date", "due_time", "assigned_to", "created_at",
+    ];
+
+    const rows = tasks.map((task) => [
+      task.id, task.title, task.description, task.status, task.priority,
+      task.due_date, task.due_time, task.assigned_to, task.created_at,
+    ]);
+
+    const csv = "\\uFEFF" + [headers, ...rows]
+      .map((row) => row.map(escapeCsvValue).join(","))
+      .join("\\r\\n");
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `tasks-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   }
 
   function openCreateForm() {
@@ -436,7 +515,10 @@ export default function TasksPage() {
         (task.description?.toLowerCase().includes(query) ?? false);
 
       const matchesStatus =
-        statusFilter === "all" || task.status === statusFilter;
+        statusFilter === "all" ||
+        (statusFilter === "overdue"
+          ? isOverdue(task)
+          : task.status === statusFilter);
 
       return matchesSearch && matchesStatus;
     });
@@ -547,6 +629,13 @@ export default function TasksPage() {
             className="rounded-xl border border-gray-200 bg-white px-5 py-3 text-sm font-semibold text-gray-700 transition hover:bg-gray-50"
           >
             Import CSV
+          </button>
+          <button
+            type="button"
+            onClick={handleExportTasks}
+            className="rounded-xl border border-gray-200 bg-white px-5 py-3 text-sm font-semibold text-gray-700 transition hover:bg-gray-50"
+          >
+            Export CSV
           </button>
         </div>
 
@@ -745,6 +834,7 @@ export default function TasksPage() {
               <option value="pending">Pending</option>
               <option value="in_progress">In Progress</option>
               <option value="completed">Completed</option>
+              <option value="overdue">Overdue</option>
             </select>
 
             <select
@@ -869,6 +959,7 @@ export default function TasksPage() {
                               }
                             >
                               {formatDate(task.due_date)}
+                              {task.due_time ? ` · ${formatTime(task.due_time)}` : ""}
                             </span>
                           </span>
 
@@ -891,6 +982,26 @@ export default function TasksPage() {
                         </span>
 
                         <div className="flex items-center gap-2">
+                          {task.status !== "completed" && (
+                            <button
+                              type="button"
+                              onClick={() => updateTaskStatus(task.id, "completed")}
+                              className="rounded-lg border border-emerald-200 px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-50"
+                            >
+                              Complete
+                            </button>
+                          )}
+
+                          {task.status === "completed" && (
+                            <button
+                              type="button"
+                              onClick={() => updateTaskStatus(task.id, "pending")}
+                              className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-700 transition hover:bg-gray-100"
+                            >
+                              Reopen
+                            </button>
+                          )}
+
                           <button
                             type="button"
                             onClick={() => openEditForm(task)}

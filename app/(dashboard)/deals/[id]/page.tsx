@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import DashboardShell from "@/components/layout/DashboardShell";
 import DealForm from "@/components/forms/DealForm";
+import NoteForm, { type RelatedOption } from "@/components/forms/NoteForm";
 
 type Deal = {
   id: string;
@@ -19,6 +20,7 @@ type Deal = {
   stage_id: string | null;
   contact_id: string | null;
   company_id: string | null;
+  lead_id: string | null;
   owner_id: string | null;
   created_at: string | null;
   updated_at: string | null;
@@ -50,6 +52,18 @@ type Company = {
   website: string | null;
   email: string | null;
   phone: string | null;
+};
+
+type Note = {
+  id: string;
+  title: string;
+  content: string | null;
+  contact_id: string | null;
+  company_id: string | null;
+  lead_id: string | null;
+  deal_id: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 function formatCurrency(value: number | null, currency: string | null) {
@@ -96,6 +110,12 @@ export default function DealDetailPage() {
   const [error, setError] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [organizationId, setOrganizationId] = useState("");
+  const [userId, setUserId] = useState("");
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [showNoteForm, setShowNoteForm] = useState(false);
+  const [editingNote, setEditingNote] = useState<Note | null>(null);
+  const [notesLoading, setNotesLoading] = useState(false);
 
   useEffect(() => {
     async function loadDeal() {
@@ -133,7 +153,7 @@ export default function DealDetailPage() {
       const { data: dealData, error: dealError } = await supabase
         .from("deals")
         .select(
-          "id, organization_id, title, description, value, currency, expected_close_date, pipeline_id, stage_id, contact_id, company_id, owner_id, created_at, updated_at"
+          "id, organization_id, title, description, value, currency, expected_close_date, pipeline_id, stage_id, contact_id, company_id, lead_id, owner_id, created_at, updated_at"
         )
         .eq("id", params.id)
         .eq("organization_id", organizationId)
@@ -145,7 +165,17 @@ export default function DealDetailPage() {
         return;
       }
 
+      setOrganizationId(organizationId);
+      setUserId(user.id);
       setDeal(dealData as Deal);
+
+      const { data: notesData } = await supabase
+        .from("notes")
+        .select("id, title, content, contact_id, company_id, lead_id, deal_id, created_at, updated_at")
+        .eq("organization_id", organizationId)
+        .eq("deal_id", dealData.id)
+        .order("created_at", { ascending: false });
+      setNotes((notesData as Note[]) || []);
 
       const [pipelineResult, stageResult, contactResult, companyResult] =
         await Promise.all([
@@ -471,6 +501,35 @@ export default function DealDetailPage() {
             </div>
           </section>
         </div>
+
+        <section className="rounded-xl border bg-card p-5 shadow-sm">
+          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+            <div>
+              <h2 className="text-lg font-semibold">Deal Notes</h2>
+              <p className="text-sm text-muted-foreground">Notes linked to this deal.</p>
+            </div>
+            <button type="button" onClick={() => { setEditingNote(null); setShowNoteForm(true); }} className="rounded-lg bg-black px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800">Add Note</button>
+          </div>
+          {showNoteForm && (
+            <div className="mt-5 rounded-xl border p-4">
+              <NoteForm organizationId={organizationId} userId={userId} note={editingNote}
+                contacts={[]} companies={[]} leads={[]} deals={[{ id: deal.id, name: deal.title } as RelatedOption]}
+                fixedDealId={deal.id}
+                onSuccess={() => window.location.reload()}
+                onCancel={() => { setShowNoteForm(false); setEditingNote(null); }} />
+            </div>
+          )}
+          <div className="mt-5 space-y-3">
+            {notesLoading ? <p className="text-sm text-muted-foreground">Loading notes...</p> : notes.length === 0 ? <p className="text-sm text-muted-foreground">No notes linked to this deal.</p> : notes.map((note) => (
+              <div key={note.id} className="rounded-xl border p-4">
+                <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-start">
+                  <div><h3 className="font-semibold">{note.title}</h3><p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">{note.content}</p></div>
+                  <div className="flex gap-2"><button type="button" onClick={() => { setEditingNote(note); setShowNoteForm(true); }} className="text-sm font-medium text-blue-600 hover:underline">Edit</button><button type="button" onClick={async () => { if (!window.confirm("Delete this note?")) return; await supabase.from("notes").delete().eq("id", note.id).eq("organization_id", organizationId); setNotes((current) => current.filter((item) => item.id !== note.id)); }} className="text-sm font-medium text-red-600 hover:underline">Delete</button></div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
       </div>
     </DashboardShell>
   );

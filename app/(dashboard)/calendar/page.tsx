@@ -132,8 +132,8 @@ export default function CalendarPage() {
 
   function parseCalendarCsv(csvText: string): ImportCalendarEvent[] {
     const lines = csvText
-      .replace(/^\\uFEFF/, "")
-      .split(/\\r?\\n/)
+      .replace(/^\uFEFF/, "")
+      .split(/\r?\n/)
       .map((line) => line.trim())
       .filter(Boolean);
 
@@ -142,7 +142,7 @@ export default function CalendarPage() {
     }
 
     const headers = parseCsvLine(lines[0]).map((header) =>
-      header.toLowerCase().replace(/\\s+/g, "_").trim()
+      header.toLowerCase().replace(/\s+/g, "_").trim()
     );
 
     const requiredHeaders = ["title", "start_at", "end_at"];
@@ -344,6 +344,64 @@ export default function CalendarPage() {
     }
   }
 
+  function escapeCsvValue(value: unknown) {
+    const text = value == null ? "" : String(value);
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+
+  function handleExportEvents() {
+    if (events.length === 0) {
+      setError("No calendar events available to export.");
+      return;
+    }
+
+    const headers = [
+      "id",
+      "title",
+      "description",
+      "start_at",
+      "end_at",
+      "all_day",
+      "location",
+      "contact_id",
+      "company_id",
+      "deal_id",
+      "assigned_to",
+      "created_at",
+    ];
+
+    const rows = events.map((event) =>
+      [
+        event.id,
+        event.title,
+        event.description,
+        event.start_at,
+        event.end_at,
+        event.all_day,
+        event.location,
+        event.contact_id,
+        event.company_id,
+        event.deal_id,
+        event.assigned_to,
+        event.created_at,
+      ]
+        .map(escapeCsvValue)
+        .join(",")
+    );
+
+    const csv = `\uFEFF${headers.join(",")}\r\n${rows.join("\r\n")}`;
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = `calendar-events-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
   async function loadEvents() {
     setLoading(true);
     setError("");
@@ -533,6 +591,13 @@ export default function CalendarPage() {
               className="rounded-xl border border-gray-300 bg-white px-5 py-3 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50"
             >
               {showImport ? "Close Import" : "Import CSV"}
+            </button>
+            <button
+              type="button"
+              onClick={handleExportEvents}
+              className="rounded-xl border border-gray-300 bg-white px-5 py-3 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50"
+            >
+              Export CSV
             </button>
             <button
               type="button"

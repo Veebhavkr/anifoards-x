@@ -36,7 +36,17 @@ type ImportLead = {
   status: string;
   priority: string;
 };
+type Pipeline = {
+  id: string;
+  name: string;
+};
 
+type PipelineStage = {
+  id: string;
+  pipeline_id: string;
+  name: string;
+  position: number;
+};
 export default function LeadsPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [showForm, setShowForm] = useState(false);
@@ -73,6 +83,17 @@ export default function LeadsPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
+  const [pipelines, setPipelines] = useState<Pipeline[]>([]);
+  const [pipelineStages, setPipelineStages] = useState<PipelineStage[]>([]);
+  const [conversionLead, setConversionLead] = useState<Lead | null>(null);
+  const [conversionTitle, setConversionTitle] = useState("");
+  const [conversionValue, setConversionValue] = useState("");
+  const [conversionCurrency, setConversionCurrency] = useState("INR");
+  const [conversionPipelineId, setConversionPipelineId] = useState("");
+  const [conversionStageId, setConversionStageId] = useState("");
+  const [conversionLoading, setConversionLoading] = useState(false);
+  const [conversionError, setConversionError] = useState("");
+
   async function loadLeads() {
     const supabase = createClient();
 
@@ -100,6 +121,21 @@ export default function LeadsPage() {
       setLoading(false);
       return;
     }
+
+    const [{ data: pipelineRows }, { data: stageRows }] = await Promise.all([
+      supabase
+        .from("pipelines")
+        .select("id, name")
+        .eq("organization_id", organizationId)
+        .order("created_at", { ascending: true }),
+      supabase
+        .from("pipeline_stages")
+        .select("id, pipeline_id, name, position")
+        .order("position", { ascending: true }),
+    ]);
+
+    setPipelines(pipelineRows ?? []);
+    setPipelineStages(stageRows ?? []);
 
     const { data: currentMembership } = await supabase
       .from("organization_members")
@@ -338,6 +374,234 @@ export default function LeadsPage() {
     await loadLeads();
   }
 
+  function openConversion(lead: Lead) {
+    setConversionLead(lead);
+    setConversionTitle(
+      `${lead.first_name}${lead.last_name ? ` ${lead.last_name}` : ""} Deal`
+    );
+    setConversionValue("");
+    setConversionCurrency("INR");
+    setConversionError("");
+
+    const defaultPipeline = pipelines.find((pipeline) => pipeline.id);
+    const selectedPipelineId = defaultPipeline?.id ?? "";
+    const firstStage = pipelineStages
+      .filter((stage) => stage.pipeline_id === selectedPipelineId)
+      .sort((a, b) => a.position - b.position)[0];
+
+    setConversionPipelineId(selectedPipelineId);
+    setConversionStageId(firstStage?.id ?? "");
+  }
+
+  function closeConversion() {
+    if (conversionLoading) return;
+    setConversionLead(null);
+    setConversionError("");
+  }
+
+  async function handleConvertLead() {
+    if (!conversionLead) return;
+
+    const numericValue = Number(conversionValue);
+    if (!conversionTitle.trim()) {
+      setConversionError("Deal title is required.");
+      return;
+    }
+
+    if (!conversionPipelineId || !conversionStageId) {
+      setConversionError("Please select a pipeline and stage.");
+      return;
+    }
+
+    if (!conversionValue.trim() || !Number.isFinite(numericValue) || numericValue < 0) {
+      setConversionError("Enter a valid deal value.");
+      return;
+    }
+
+    setConversionLoading(true);
+    setConversionError("");
+
+    const supabase = createClient();
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      setConversionError("Please login first.");
+      setConversionLoading(false);
+      return;
+    }
+
+    const { data: membership, error: membershipError } = await supabase
+      .from("organization_members")
+      .select("organization_id")
+      .eq("user_id", user.id)
+      .limit(1)
+      .maybeSingle();
+
+    if (membershipError || !membership?.organization_id) {
+      setConversionError(membershipError?.message || "No organization found.");
+      setConversionLoading(false);
+      return;
+    }
+
+    const { data: existingDeal, error: existingDealError } = await supabase
+      .from("deals")
+      .select("id")
+      .eq("organization_id", membership.organization_id)
+      .eq("lead_id", conversionLead.id)
+      .maybeSingle();
+
+    if (existingDealError) {
+      setConversionError(existingDealError.message);
+      setConversionLoading(false);
+      return;
+    }
+
+    if (existingDeal) {
+      setConversionError("This lead has already been converted into a deal.");
+      setConversionLoading(false);
+      return;
+    }
+
+    let companyId: string | null = null;
+    let contactId: string | null = null;
+
+    if (conversionLead.company_name?.trim()) {
+      const companyName = conversionLead.company_name.trim();
+      const { data: existingCompany, error: companyLookupError } = await supabase
+        .from("companies")
+        .select("id")
+        .eq("organization_id", membership.organization_id)
+        .ilike("name", companyName)
+        .limit(1)
+        .maybeSingle();
+
+      if (companyLookupError) {
+        setConversionError(companyLookupError.message);
+        setConversionLoading(false);
+        return;
+      }
+
+      if (existingCompany?.id) {
+        companyId = existingCompany.id;
+      } else {
+        const { data: createdCompany, error: companyCreateError } = await supabase
+          .from("companies")
+          .insert({
+            organization_id: membership.organization_id,
+            name: companyName,
+            email: conversionLead.email ?? null,
+            phone: conversionLead.phone ?? null,
+            owner_id: conversionLead.owner_id ?? user.id,
+            created_by: user.id,
+          })
+          .select("id")
+          .single();
+
+        if (companyCreateError || !createdCompany?.id) {
+          setConversionError(companyCreateError?.message || "Company could not be created.");
+          setConversionLoading(false);
+          return;
+        }
+
+        companyId = createdCompany.id;
+      }
+    }
+
+    if (conversionLead.email?.trim()) {
+      const { data: existingContact, error: contactLookupError } = await supabase
+        .from("contacts")
+        .select("id")
+        .eq("organization_id", membership.organization_id)
+        .ilike("email", conversionLead.email.trim())
+        .limit(1)
+        .maybeSingle();
+
+      if (contactLookupError) {
+        setConversionError(contactLookupError.message);
+        setConversionLoading(false);
+        return;
+      }
+
+      if (existingContact?.id) {
+        contactId = existingContact.id;
+      } else {
+        const { data: createdContact, error: contactCreateError } = await supabase
+          .from("contacts")
+          .insert({
+            organization_id: membership.organization_id,
+            first_name: conversionLead.first_name.trim(),
+            last_name: conversionLead.last_name?.trim() || null,
+            email: conversionLead.email.trim(),
+            phone: conversionLead.phone ?? null,
+            job_title: conversionLead.job_title ?? null,
+            company_id: companyId,
+            owner_id: conversionLead.owner_id ?? user.id,
+            created_by: user.id,
+          })
+          .select("id")
+          .single();
+
+        if (contactCreateError || !createdContact?.id) {
+          setConversionError(contactCreateError?.message || "Contact could not be created.");
+          setConversionLoading(false);
+          return;
+        }
+
+        contactId = createdContact.id;
+      }
+    }
+
+    const { error: dealError } = await supabase.from("deals").insert({
+      organization_id: membership.organization_id,
+      pipeline_id: conversionPipelineId,
+      stage_id: conversionStageId,
+      title: conversionTitle.trim(),
+      description: conversionLead.company_name
+        ? `Converted from lead: ${conversionLead.company_name}`
+        : "Converted from lead",
+      value: numericValue,
+      currency: conversionCurrency,
+      contact_id: contactId,
+      company_id: companyId,
+      owner_id: conversionLead.owner_id ?? user.id,
+      created_by: user.id,
+      lead_id: conversionLead.id,
+    });
+
+    if (dealError) {
+      setConversionError(
+        dealError.code === "23505"
+          ? "This lead has already been converted into a deal."
+          : dealError.message
+      );
+      setConversionLoading(false);
+      return;
+    }
+
+    const { error: leadUpdateError } = await supabase
+      .from("leads")
+      .update({ status: "converted" })
+      .eq("id", conversionLead.id)
+      .eq("organization_id", membership.organization_id);
+
+    if (leadUpdateError) {
+      setConversionError(
+        `Deal created, but lead status could not be updated: ${leadUpdateError.message}`
+      );
+      setConversionLoading(false);
+      await loadLeads();
+      return;
+    }
+
+    setConversionLead(null);
+    setConversionError("");
+    setConversionLoading(false);
+    await loadLeads();
+  }
+
   async function handleDelete(lead: Lead) {
     const confirmed = window.confirm(
       `Delete ${lead.first_name}${lead.last_name ? ` ${lead.last_name}` : ""}? This action cannot be undone.`
@@ -462,6 +726,63 @@ export default function LeadsPage() {
     }
   }
 
+
+
+  function escapeCsvValue(value: unknown) {
+    const text = value == null ? "" : String(value);
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+
+  function handleExportLeads() {
+    if (leads.length === 0) {
+      setError("No leads available to export.");
+      return;
+    }
+
+    const headers = [
+      "id",
+      "first_name",
+      "last_name",
+      "email",
+      "phone",
+      "company_name",
+      "job_title",
+      "source",
+      "status",
+      "priority",
+      "owner_id",
+    ];
+
+    const rows = leads.map((lead) =>
+      [
+        lead.id,
+        lead.first_name,
+        lead.last_name,
+        lead.email,
+        lead.phone,
+        lead.company_name,
+        lead.job_title,
+        lead.source,
+        lead.status,
+        lead.priority,
+        lead.owner_id,
+      ]
+        .map(escapeCsvValue)
+        .join(","),
+    );
+
+    const csv = `\uFEFF${headers.map(escapeCsvValue).join(",")}\r\n${rows.join("\r\n")}`;
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = `leads-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
 
   function parseCsvLine(line: string) {
     const values: string[] = [];
@@ -731,6 +1052,14 @@ export default function LeadsPage() {
             className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-5 py-3 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50"
           >
             Import CSV
+          </button>
+
+          <button
+            type="button"
+            onClick={handleExportLeads}
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-5 py-3 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50"
+          >
+            Export CSV
           </button>
 
           <button
@@ -1165,6 +1494,137 @@ export default function LeadsPage() {
           </div>
         )}
 
+        {conversionLead && (
+          <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5 shadow-sm sm:p-7">
+            <div className="mb-6 flex items-start justify-between gap-4">
+              <div>
+                <div className="mb-2 inline-flex rounded-lg bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-700">
+                  CONVERT LEAD
+                </div>
+                <h2 className="text-xl font-bold text-gray-950">
+                  Convert {conversionLead.first_name} into a Deal
+                </h2>
+                <p className="mt-1 text-sm text-gray-600">
+                  Create a deal and mark this lead as converted.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeConversion}
+                disabled={conversionLoading}
+                className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="grid gap-5 sm:grid-cols-2">
+              <div className="sm:col-span-2">
+                <label className="mb-2 block text-sm font-medium text-gray-700">
+                  Deal Title *
+                </label>
+                <input
+                  value={conversionTitle}
+                  onChange={(event) => setConversionTitle(event.target.value)}
+                  className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-gray-950 focus:ring-2 focus:ring-gray-950/10"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-700">
+                  Deal Value *
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={conversionValue}
+                  onChange={(event) => setConversionValue(event.target.value)}
+                  placeholder="Enter deal value"
+                  className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-gray-950 focus:ring-2 focus:ring-gray-950/10"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-700">
+                  Currency
+                </label>
+                <select
+                  value={conversionCurrency}
+                  onChange={(event) => setConversionCurrency(event.target.value)}
+                  className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-gray-950 focus:ring-2 focus:ring-gray-950/10"
+                >
+                  <option value="INR">INR</option>
+                  <option value="USD">USD</option>
+                  <option value="EUR">EUR</option>
+                  <option value="GBP">GBP</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-700">
+                  Pipeline *
+                </label>
+                <select
+                  value={conversionPipelineId}
+                  onChange={(event) => {
+                    const pipelineId = event.target.value;
+                    const firstStage = pipelineStages
+                      .filter((stage) => stage.pipeline_id === pipelineId)
+                      .sort((a, b) => a.position - b.position)[0];
+                    setConversionPipelineId(pipelineId);
+                    setConversionStageId(firstStage?.id ?? "");
+                  }}
+                  className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-gray-950 focus:ring-2 focus:ring-gray-950/10"
+                >
+                  <option value="">Select pipeline</option>
+                  {pipelines.map((pipeline) => (
+                    <option key={pipeline.id} value={pipeline.id}>
+                      {pipeline.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-700">
+                  Stage *
+                </label>
+                <select
+                  value={conversionStageId}
+                  onChange={(event) => setConversionStageId(event.target.value)}
+                  className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-gray-950 focus:ring-2 focus:ring-gray-950/10"
+                >
+                  <option value="">Select stage</option>
+                  {pipelineStages
+                    .filter((stage) => stage.pipeline_id === conversionPipelineId)
+                    .sort((a, b) => a.position - b.position)
+                    .map((stage) => (
+                      <option key={stage.id} value={stage.id}>
+                        {stage.name}
+                      </option>
+                    ))}
+                </select>
+              </div>
+            </div>
+
+            {conversionError && (
+              <div className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {conversionError}
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={handleConvertLead}
+              disabled={conversionLoading}
+              className="mt-6 w-full rounded-xl bg-gray-950 px-5 py-3.5 text-sm font-semibold text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {conversionLoading ? "Converting..." : "Create Deal & Convert Lead"}
+            </button>
+          </div>
+        )}
+
         {/* Leads List */}
         <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
           <div className="flex flex-col gap-4 border-b border-gray-100 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
@@ -1365,6 +1825,16 @@ export default function LeadsPage() {
 
                       <td className="px-6 py-5">
                         <div className="flex items-center justify-end gap-2">
+                          {lead.status !== "converted" && (
+                            <button
+                              type="button"
+                              onClick={() => openConversion(lead)}
+                              className="rounded-lg border border-blue-200 px-3 py-2 text-xs font-semibold text-blue-700 transition hover:bg-blue-50"
+                            >
+                              Convert
+                            </button>
+                          )}
+
                           <button
                             type="button"
                             onClick={() => startEditing(lead)}

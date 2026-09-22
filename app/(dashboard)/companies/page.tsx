@@ -241,6 +241,51 @@ export default function CompaniesPage() {
     await loadCompanies();
   }
 
+  function escapeCsvValue(value: unknown) {
+    const text = value == null ? "" : String(value);
+    return /[",\n\r]/.test(text)
+      ? `"${text.replace(/"/g, '""')}"`
+      : text;
+  }
+
+  function handleExportCompanies() {
+    if (companies.length === 0) {
+      setError("No companies available to export.");
+      return;
+    }
+
+    const headers = [
+      "id",
+      "name",
+      "website",
+      "email",
+      "phone",
+      "industry",
+      "company_size",
+      "city",
+      "state",
+      "owner_id",
+    ];
+
+    const rows = companies.map((company) =>
+      headers
+        .map((header) => escapeCsvValue(company[header as keyof Company]))
+        .join(",")
+    );
+
+    const csv = "\uFEFF" + [headers.join(","), ...rows].join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = `companies-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
   function parseCsvLine(line: string) {
     const values: string[] = [];
     let current = "";
@@ -561,6 +606,14 @@ export default function CompaniesPage() {
               className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-300 bg-white px-5 py-3 text-sm font-semibold text-gray-800 shadow-sm transition hover:bg-gray-50"
             >
               Import CSV
+            </button>
+
+            <button
+              type="button"
+              onClick={handleExportCompanies}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-300 bg-white px-5 py-3 text-sm font-semibold text-gray-800 shadow-sm transition hover:bg-gray-50"
+            >
+              Export CSV
             </button>
 
             <button

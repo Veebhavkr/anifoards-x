@@ -134,6 +134,11 @@ function getTypeIcon(type: string) {
   }
 }
 
+function escapeCsvValue(value: unknown) {
+  const text = value == null ? "" : String(value);
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
 export default function ActivitiesPage() {
   const supabase = createClient();
 
@@ -299,10 +304,10 @@ export default function ActivitiesPage() {
   }
 
   function parseActivitiesCsv(csvText: string): ImportActivity[] {
-    const lines = csvText.replace(/^\\uFEFF/, "").split(/\\r?\\n/).filter((line) => line.trim());
+    const lines = csvText.replace(/^\uFEFF/, "").split(/\r?\n/).filter((line) => line.trim());
     if (lines.length < 2) throw new Error("CSV must contain a header and at least one row.");
 
-    const headers = parseCsvLine(lines[0]).map((header) => header.toLowerCase().trim().replace(/\\s+/g, "_"));
+    const headers = parseCsvLine(lines[0]).map((header) => header.toLowerCase().trim().replace(/\s+/g, "_"));
     const requiredHeaders = ["type", "subject"];
     const missingHeaders = requiredHeaders.filter((header) => !headers.includes(header));
     if (missingHeaders.length) throw new Error(`Missing required columns: ${missingHeaders.join(", ")}`);
@@ -311,7 +316,7 @@ export default function ActivitiesPage() {
     return lines.slice(1).map((line, rowIndex) => {
       const values = parseCsvLine(line);
       const row = Object.fromEntries(headers.map((header, index) => [header, values[index] || ""]));
-      const type = String(row.type || "").trim().toLowerCase().replace(/\\s+/g, "_");
+      const type = String(row.type || "").trim().toLowerCase().replace(/\s+/g, "_");
       const subject = String(row.subject || "").trim();
 
       if (!allowedTypes.includes(type)) {
@@ -410,6 +415,57 @@ export default function ActivitiesPage() {
     } finally {
       setImportLoading(false);
     }
+  }
+
+  function handleExportActivities() {
+    if (!activities.length) {
+      setError("No activities available to export.");
+      return;
+    }
+
+    const headers = [
+      "id",
+      "type",
+      "subject",
+      "description",
+      "activity_date",
+      "activity_time",
+      "deal_id",
+      "contact_id",
+      "company_id",
+      "created_at",
+    ];
+
+    const rows = activities.map((activity) => [
+      activity.id,
+      activity.type,
+      activity.subject,
+      activity.description,
+      activity.activity_date,
+      activity.activity_time,
+      activity.deal_id,
+      activity.contact_id,
+      activity.company_id,
+      activity.created_at,
+    ]);
+
+    const csv = [
+      headers.map(escapeCsvValue).join(","),
+      ...rows.map((row) => row.map(escapeCsvValue).join(",")),
+    ].join("\\r\\n");
+
+    const blob = new Blob(["\\uFEFF" + csv], {
+      type: "text/csv;charset=utf-8;",
+    });
+
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `activities-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   }
 
   function openCreateForm() {
@@ -594,6 +650,14 @@ export default function ActivitiesPage() {
             className="rounded-xl border border-blue-200 bg-blue-50 px-5 py-3 text-sm font-semibold text-blue-700 shadow-sm transition hover:bg-blue-100"
           >
             Import CSV
+          </button>
+
+          <button
+            type="button"
+            onClick={handleExportActivities}
+            className="rounded-xl border border-gray-200 bg-white px-5 py-3 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50"
+          >
+            Export CSV
           </button>
 
           <button

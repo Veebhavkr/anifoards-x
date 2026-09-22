@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
@@ -11,6 +10,7 @@ type Task = {
   status: string;
   priority: string;
   due_date: string | null;
+  due_time?: string | null;
   assigned_to?: string | null;
   deal_id?: string | null;
   contact_id?: string | null;
@@ -66,6 +66,7 @@ export default function TaskForm({
   const [priority, setPriority] = useState("medium");
   const [status, setStatus] = useState("pending");
   const [dueDate, setDueDate] = useState("");
+  const [dueTime, setDueTime] = useState("");
   const [dealId, setDealId] = useState("");
   const [contactId, setContactId] = useState("");
   const [companyId, setCompanyId] = useState("");
@@ -93,6 +94,7 @@ export default function TaskForm({
       setPriority(task.priority);
       setStatus(task.status);
       setDueDate(task.due_date?.slice(0, 10) ?? "");
+      setDueTime(task.due_time?.slice(0, 5) ?? "");
       setDealId(task.deal_id ?? "");
       setContactId(task.contact_id ?? "");
       setCompanyId(task.company_id ?? "");
@@ -103,6 +105,7 @@ export default function TaskForm({
       setPriority("medium");
       setStatus("pending");
       setDueDate("");
+      setDueTime("");
       setDealId("");
       setContactId("");
       setCompanyId("");
@@ -334,6 +337,7 @@ export default function TaskForm({
       priority,
       status,
       due_date: dueDate || null,
+      due_time: dueTime || null,
       deal_id: dealId || null,
       contact_id: contactId || null,
       company_id: companyId || null,
@@ -448,6 +452,19 @@ export default function TaskForm({
             type="date"
             value={dueDate}
             onChange={(event) => setDueDate(event.target.value)}
+            className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-black"
+          />
+        </div>
+
+        <div>
+          <label className="mb-2 block text-sm font-medium text-gray-700">
+            Due Time
+          </label>
+
+          <input
+            type="time"
+            value={dueTime}
+            onChange={(event) => setDueTime(event.target.value)}
             className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-black"
           />
         </div>

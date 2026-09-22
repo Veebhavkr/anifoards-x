@@ -30,6 +30,7 @@ type TaskRecord = {
   status: string | null;
   priority: string | null;
   due_date: string | null;
+  due_time: string | null;
 };
 
 type MonthlyDealSummary = {
@@ -63,6 +64,20 @@ function formatDate(value: string | null) {
   }).format(new Date(value));
 }
 
+function formatTime(value: string | null) {
+  if (!value) return "";
+  const [hours, minutes] = value.split(":").map(Number);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return value;
+
+  const date = new Date();
+  date.setHours(hours, minutes, 0, 0);
+
+  return new Intl.DateTimeFormat("en-IN", {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
 function normalizeStatus(value: string | null) {
   return value?.trim().toLowerCase().replace(/[_-]/g, " ") || "unknown";
 }
@@ -73,7 +88,7 @@ function PerformanceMetricCard({
   description,
 }: {
   title: string;
-  value: string;
+  value: string | number;
   description: string;
 }) {
   return (
@@ -168,7 +183,7 @@ export default async function DashboardPage() {
 
         supabase
           .from("tasks")
-          .select("id, title, status, priority, due_date")
+          .select("id, title, status, priority, due_date, due_time")
           .eq("organization_id", organizationId)
           .order("due_date", { ascending: true, nullsFirst: false }),
 
@@ -333,7 +348,20 @@ export default async function DashboardPage() {
             status,
           );
 
-          return !isCompleted && task.due_date;
+          if (isCompleted || !task.due_date) return false;
+
+          const dueDate = new Date(`${task.due_date}T23:59:59`);
+          return !Number.isNaN(dueDate.getTime()) && dueDate.getTime() >= todayTime;
+        })
+        .sort((a, b) => {
+          const aTime = new Date(
+            `${a.due_date}T${a.due_time || "23:59:59"}`,
+          ).getTime();
+          const bTime = new Date(
+            `${b.due_date}T${b.due_time || "23:59:59"}`,
+          ).getTime();
+
+          return aTime - bTime;
         })
         .slice(0, 5);
 
@@ -624,6 +652,7 @@ export default async function DashboardPage() {
 
                     <p className="mt-1 text-xs text-muted-foreground">
                       Due {formatDate(task.due_date)}
+                      {task.due_time ? ` · ${formatTime(task.due_time)}` : ""}
                     </p>
                   </div>
                 ))}

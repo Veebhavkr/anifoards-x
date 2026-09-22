@@ -404,6 +404,73 @@ export default function DealsPage() {
     }
   }
 
+
+  function escapeCsvValue(value: unknown) {
+    const text = value == null ? "" : String(value);
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+
+  function handleExportDeals() {
+    if (deals.length === 0) {
+      setError("No deals available to export.");
+      return;
+    }
+
+    const headers = [
+      "id",
+      "title",
+      "description",
+      "value",
+      "currency",
+      "expected_close_date",
+      "pipeline",
+      "stage",
+      "contact",
+      "company",
+      "pipeline_id",
+      "stage_id",
+      "contact_id",
+      "company_id",
+      "owner_id",
+    ];
+
+    const rows = deals.map((deal) => [
+      deal.id,
+      deal.title,
+      deal.description,
+      deal.value,
+      deal.currency,
+      deal.expected_close_date,
+      getPipelineName(deal.pipeline_id),
+      getStageName(deal.stage_id),
+      getContactName(deal.contact_id),
+      getCompanyName(deal.company_id),
+      deal.pipeline_id,
+      deal.stage_id,
+      deal.contact_id,
+      deal.company_id,
+      deal.owner_id,
+    ]);
+
+    const csv = [
+      headers.map(escapeCsvValue).join(","),
+      ...rows.map((row) => row.map(escapeCsvValue).join(",")),
+    ].join("\\r\\n");
+
+    const blob = new Blob(["\\uFEFF" + csv], {
+      type: "text/csv;charset=utf-8;",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = `deals-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
   function handleEditDeal(deal: Deal) {
     setError("");
     setEditingDeal(deal);
@@ -715,6 +782,13 @@ export default function DealsPage() {
             className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-5 py-3 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50"
           >
             Import CSV
+          </button>
+          <button
+            type="button"
+            onClick={handleExportDeals}
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-5 py-3 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50"
+          >
+            Export CSV
           </button>
         </div>
 

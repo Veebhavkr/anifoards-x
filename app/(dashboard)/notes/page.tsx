@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { createClient } from "@/lib/supabase/client";
 import DashboardShell from "@/components/layout/DashboardShell";
-import NoteForm from "@/components/forms/NoteForm";
+import NoteForm, { type RelatedOption } from "@/components/forms/NoteForm";
 
 type Note = {
   id: string;
@@ -13,6 +13,10 @@ type Note = {
   content: string | null;
   created_at: string;
   updated_at: string | null;
+  contact_id: string | null;
+  company_id: string | null;
+  lead_id: string | null;
+  deal_id: string | null;
 };
 
 type ImportNote = {
@@ -24,6 +28,10 @@ export default function NotesPage() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [organizationId, setOrganizationId] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
+  const [contacts, setContacts] = useState<RelatedOption[]>([]);
+  const [companies, setCompanies] = useState<RelatedOption[]>([]);
+  const [leads, setLeads] = useState<RelatedOption[]>([]);
+  const [deals, setDeals] = useState<RelatedOption[]>([]);
 
   const [showForm, setShowForm] = useState(false);
   const [editingNote, setEditingNote] = useState<Note | null>(null);
@@ -252,7 +260,7 @@ export default function NotesPage() {
       const { data, error: notesError } = await supabase
         .from("notes")
         .select(
-          "id, organization_id, created_by, title, content, created_at, updated_at"
+          "id, organization_id, created_by, title, content, created_at, updated_at, contact_id, company_id, lead_id, deal_id"
         )
         .eq("organization_id", currentOrganizationId)
         .order("created_at", { ascending: false });
@@ -262,6 +270,63 @@ export default function NotesPage() {
       }
 
       setNotes(data ?? []);
+
+      const [
+        { data: contactRows, error: contactsError },
+        { data: companyRows, error: companiesError },
+        { data: leadRows, error: leadsError },
+        { data: dealRows, error: dealsError },
+      ] = await Promise.all([
+        supabase
+          .from("contacts")
+          .select("id, first_name, last_name")
+          .eq("organization_id", currentOrganizationId)
+          .order("first_name"),
+        supabase
+          .from("companies")
+          .select("id, name")
+          .eq("organization_id", currentOrganizationId)
+          .order("name"),
+        supabase
+          .from("leads")
+          .select("id, first_name, last_name")
+          .eq("organization_id", currentOrganizationId)
+          .order("first_name"),
+        supabase
+          .from("deals")
+          .select("id, title")
+          .eq("organization_id", currentOrganizationId)
+          .order("title"),
+      ]);
+
+      if (contactsError || companiesError || leadsError || dealsError) {
+        throw new Error(
+          contactsError?.message ||
+            companiesError?.message ||
+            leadsError?.message ||
+            dealsError?.message ||
+            "Unable to load related records."
+        );
+      }
+
+      setContacts(
+        (contactRows ?? []).map((row) => ({
+          id: row.id,
+          name: [row.first_name, row.last_name].filter(Boolean).join(" ") || "Unnamed contact",
+        }))
+      );
+      setCompanies(
+        (companyRows ?? []).map((row) => ({ id: row.id, name: row.name }))
+      );
+      setLeads(
+        (leadRows ?? []).map((row) => ({
+          id: row.id,
+          name: [row.first_name, row.last_name].filter(Boolean).join(" ") || "Unnamed lead",
+        }))
+      );
+      setDeals(
+        (dealRows ?? []).map((row) => ({ id: row.id, name: row.title }))
+      );
     } catch (loadError) {
       setError(
         loadError instanceof Error
@@ -580,6 +645,10 @@ export default function NotesPage() {
               organizationId={organizationId}
               userId={userId}
               note={editingNote}
+              contacts={contacts}
+              companies={companies}
+              leads={leads}
+              deals={deals}
               onSuccess={() => {
                 closeForm();
                 loadNotes();
@@ -692,6 +761,31 @@ export default function NotesPage() {
                     <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-600">
                       {note.content}
                     </p>
+
+                    {(note.contact_id || note.company_id || note.lead_id || note.deal_id) && (
+                      <div className="mt-3 flex flex-wrap gap-2 text-xs text-gray-500">
+                        {note.contact_id && (
+                          <span className="rounded-full bg-gray-100 px-3 py-1">
+                            Contact: {contacts.find((item) => item.id === note.contact_id)?.name ?? "Linked"}
+                          </span>
+                        )}
+                        {note.company_id && (
+                          <span className="rounded-full bg-gray-100 px-3 py-1">
+                            Company: {companies.find((item) => item.id === note.company_id)?.name ?? "Linked"}
+                          </span>
+                        )}
+                        {note.lead_id && (
+                          <span className="rounded-full bg-gray-100 px-3 py-1">
+                            Lead: {leads.find((item) => item.id === note.lead_id)?.name ?? "Linked"}
+                          </span>
+                        )}
+                        {note.deal_id && (
+                          <span className="rounded-full bg-gray-100 px-3 py-1">
+                            Deal: {deals.find((item) => item.id === note.deal_id)?.name ?? "Linked"}
+                          </span>
+                        )}
+                      </div>
+                    )}
 
                     <p className="mt-4 text-xs text-gray-400">
                       Created {formatDate(note.created_at)}

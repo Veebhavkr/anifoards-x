@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useState } from "react";
@@ -6,6 +5,19 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import DashboardShell from "@/components/layout/DashboardShell";
+import NoteForm, { type RelatedOption } from "@/components/forms/NoteForm";
+type Note = {
+  id: string;
+  title: string;
+  content: string | null;
+  contact_id: string | null;
+  company_id: string | null;
+  lead_id: string | null;
+  deal_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 type Lead = {
   id: string;
   organization_id: string;
@@ -33,6 +45,13 @@ export default function LeadDetailPage() {
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
+  const [organizationId, setOrganizationId] = useState("");
+  const [userId, setUserId] = useState("");
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [showNoteForm, setShowNoteForm] = useState(false);
+  const [editingNote, setEditingNote] = useState<Note | null>(null);
+  const [notesLoading, setNotesLoading] = useState(false);
+  const [notesError, setNotesError] = useState("");
 
   useEffect(() => {
     if (!leadId) return;
@@ -96,6 +115,21 @@ export default function LeadDetailPage() {
         }
 
         setLead(data);
+        setOrganizationId(membership.organization_id);
+        setUserId(user.id);
+
+        const { data: noteData, error: noteError } = await supabase
+          .from("notes")
+          .select("id, title, content, contact_id, company_id, lead_id, deal_id, created_at, updated_at")
+          .eq("organization_id", membership.organization_id)
+          .eq("lead_id", leadId)
+          .order("created_at", { ascending: false });
+
+        if (noteError) {
+          setNotesError(noteError.message);
+        } else {
+          setNotes((noteData ?? []) as Note[]);
+        }
       } catch (err) {
         setError(
           err instanceof Error
@@ -109,6 +143,21 @@ export default function LeadDetailPage() {
 
     loadLead();
   }, [leadId, router]);
+
+  const loadLeadNotes = async () => {
+    if (!leadId || !organizationId) return;
+    setNotesLoading(true);
+    const { data, error: noteError } = await supabase
+      .from("notes")
+      .select("id, title, content, contact_id, company_id, lead_id, deal_id, created_at, updated_at")
+      .eq("organization_id", organizationId)
+      .eq("lead_id", leadId)
+      .order("created_at", { ascending: false });
+
+    if (noteError) setNotesError(noteError.message);
+    else setNotes((data ?? []) as Note[]);
+    setNotesLoading(false);
+  };
 
   const deleteLead = async () => {
     if (!lead) return;
@@ -325,15 +374,107 @@ export default function LeadDetailPage() {
               </div>
             </section>
 
-            <section className="rounded-xl border border-dashed bg-card p-5">
-              <h2 className="text-lg font-semibold">
-                Activities & Notes
-              </h2>
+            <section className="rounded-xl border bg-card p-5 shadow-sm">
+              <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+                <div>
+                  <h2 className="text-lg font-semibold">Lead Notes</h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Notes linked to this lead.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingNote(null);
+                    setShowNoteForm(true);
+                  }}
+                  className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700"
+                >
+                  Add Note
+                </button>
+              </div>
 
-              <p className="mt-2 text-sm text-muted-foreground">
-                Activities and notes will be connected to this lead in the
-                next implementation step.
-              </p>
+              {showNoteForm && organizationId && userId && (
+                <div className="mt-5 rounded-xl border bg-muted/20 p-4">
+                  <NoteForm
+                    organizationId={organizationId}
+                    userId={userId}
+                    note={editingNote}
+                    contacts={[] as RelatedOption[]}
+                    companies={[] as RelatedOption[]}
+                    leads={[{ id: lead.id, name: fullName }]}
+                    deals={[] as RelatedOption[]}
+                    fixedLeadId={lead.id}
+                    onSuccess={() => {
+                      setShowNoteForm(false);
+                      setEditingNote(null);
+                      loadLeadNotes();
+                    }}
+                    onCancel={() => {
+                      setShowNoteForm(false);
+                      setEditingNote(null);
+                    }}
+                  />
+                </div>
+              )}
+
+              {notesError && (
+                <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-600">
+                  {notesError}
+                </p>
+              )}
+
+              {!notesLoading && notes.length === 0 ? (
+                <p className="mt-5 rounded-xl border border-dashed p-5 text-sm text-muted-foreground">
+                  No notes linked to this lead yet.
+                </p>
+              ) : (
+                <div className="mt-5 space-y-3">
+                  {notes.map((note) => (
+                    <div key={note.id} className="rounded-xl border p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <h3 className="font-semibold">{note.title}</h3>
+                          <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">
+                            {note.content || "No content"}
+                          </p>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingNote(note);
+                              setShowNoteForm(true);
+                            }}
+                            className="text-sm font-semibold text-blue-600 hover:underline"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (!window.confirm("Delete this note?")) return;
+                              const { error: deleteError } = await supabase
+                                .from("notes")
+                                .delete()
+                                .eq("id", note.id)
+                                .eq("organization_id", organizationId);
+                              if (deleteError) {
+                                setNotesError(deleteError.message);
+                              } else {
+                                setNotes((current) => current.filter((item) => item.id !== note.id));
+                              }
+                            }}
+                            className="text-sm font-semibold text-red-600 hover:underline"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </section>
           </div>
 
